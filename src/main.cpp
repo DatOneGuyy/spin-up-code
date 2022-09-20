@@ -69,7 +69,7 @@ void forward(double distance, double p = 0.15, double g = 1.1, double slew_rate 
 	int slew_count = 0;
 	int step = 5;
 
-	while (fabs(error) > threshold || step * slew_count > timeout) {
+	while (fabs(error) > threshold && step * slew_count < timeout) {
 		error = distance - avg(left.getPosition(), right.getPosition());
 		angle = inertial.getRemapped();
 		power = kp * error;
@@ -114,7 +114,7 @@ void backward(double distance, double p = 0.15, double g = 1.1, double slew_rate
 	int slew_count = 0;
 	int step = 5;
 
-	while (fabs(error) > threshold || step * slew_count > timeout) {
+	while (fabs(error) > threshold && step * slew_count < timeout) {
 		error = -distance - avg(left.getPosition(), right.getPosition());
 		angle = inertial.getRemapped();
 		power = kp * error;
@@ -140,10 +140,10 @@ void drive(double distance, double p = 0.15, double g = 1.1, double slew_rate = 
 	if (distance > 0) {
 		forward(distance, p, g, slew_rate, threshold, timeout);
 	} else {
-		backward(distance, p, g, slew_rate, threshold, timeout);
+		backward(-distance, p, g, slew_rate, threshold, timeout);
 	}
 }
-void turn_right(double angle, double p = 2.0, double d = 0.25, double slew_rate = 0.4, double threshold = 2, double timeout = 3000) {
+void turn_right(double angle, double slew_rate = 0.6, double threshold = 2, double timeout = 3000) {
 	MotorGroup left({-3, -11, -12});
 	MotorGroup right({10, 18, 19});
 
@@ -158,30 +158,33 @@ void turn_right(double angle, double p = 2.0, double d = 0.25, double slew_rate 
 	inertial.reset();
 
 	double error = angle;
-	double diff = 0;
 	double power = 0;
-	double kp = p;
-	double kd = d;
+	double kp = fmin(angle / 57, 1.5);
+	double kd = 0.2;
+	double past_error = 0;
 
 	int slew_count = 0;
 	int step = 5;
 
-	while (fabs(error) < threshold || slew_count * step > timeout) {
-		error = angle - inertial.getRemapped();
-		diff = left.getPosition() - right.getPosition();
+	while (error > threshold && slew_count * step < timeout) {
+		error = fabs(angle) - fabs(inertial.getRemapped(-180, 180));
 		power = kp * error;
-		power = c(-20, 100, power);
-		power = slew(slew_rate, slew_count, power, 15);
+		power = c(-100, 100, power);
+		power = slew(slew_rate, slew_count, power, 35);
+		power = power + kd * (error - past_error);
 
-		left.moveVoltage(120 * power - diff * kd);
-		right.moveVoltage(120 * power + diff * kd);
+		left.moveVoltage(120 * power);
+		right.moveVoltage(-120 * power);
 
+		pros::screen::print(pros::E_TEXT_MEDIUM_CENTER, 1, "error: %f, power: %f", error, power);
+		pros::screen::print(pros::E_TEXT_MEDIUM_CENTER, 2, "angle: %f", fabs(inertial.getRemapped(-180, 180) < -90 ? inertial.getRemapped(-180, 180) + 360 : inertial.getRemapped(-180, 180)));
 		slew_count++;
+		past_error = error;
 
 		pros::delay(step);
 	}
 }
-void turn_left(double angle, double p = 2.0, double d = 0.25, double slew_rate = 0.4, double threshold = 2, double timeout = 3000) {
+void turn_left(double angle, double slew_rate = 0.6, double threshold = 2, double timeout = 3000) {
 	MotorGroup left({-3, -11, -12});
 	MotorGroup right({10, 18, 19});
 
@@ -195,35 +198,36 @@ void turn_left(double angle, double p = 2.0, double d = 0.25, double slew_rate =
 	IMU inertial(16, IMUAxes::z);
 	inertial.reset();
 
-	double error = -angle;
-	double diff = 0;
+	double error = angle;
 	double power = 0;
-	double kp = p;
-	double kd = d;
+	double kp = fmin(angle / 57, 1.5);
+	double past_error = 0;
+	double kd = 0.5;
 
 	int slew_count = 0;
 	int step = 5;
 
-	while (fabs(error) < threshold || slew_count * step > timeout) {
-		error = -angle - inertial.getRemapped();
-		diff = left.getPosition() - right.getPosition();
+	while (fabs(error) > threshold && slew_count * step < timeout) {
+		error = angle - abs(inertial.getRemapped(-180, 180));
 		power = kp * error;
-		power = c(-100, 20, power);
-		power = slew(-slew_rate, slew_count, power, -15);
+		power = c(-100, 100, power);
+		power = slew(slew_rate, slew_count, power, 35);
+		power = power + kd * (error - past_error);
 
-		left.moveVoltage(120 * power - diff * kd);
-		right.moveVoltage(120 * power + diff * kd);
+		left.moveVoltage(-120 * power);
+		right.moveVoltage(120 * power);
 
 		slew_count++;
+		past_error = error;
 
 		pros::delay(step);
 	}
 }
-void turn(double angle, Direction direction, double p = 2.0, double d = 0.25, double slew_rate = 0.4, double threshold = 2, double timeout = 3000) {
+void turn(double angle, Direction direction, double p = 1.0, double d = 0.25, double slew_rate = 0.4, double threshold = 1, double timeout = 3000) {
 	if (direction == r) {
-		turn_right(angle, p, d, slew_rate, threshold, timeout);
+		turn_right(angle, slew_rate, threshold, timeout);
 	} else {
-		turn_left(angle, p, d, slew_rate, threshold, timeout);
+		turn_left(angle, slew_rate, threshold, timeout);
 	}} //turn right = true
 
 int disc_count() {
@@ -262,6 +266,27 @@ void flywheel_task(void*) {
 		if (disc_count() > 0) {
 			flywheel.moveVoltage(ready);
 		}
+		pros::delay(10);
+	}
+}
+
+void indexer_task(void*) {
+	ControllerButton L1(ControllerDigital::L1);
+	pros::ADIPort indexer('A', pros::E_ADI_DIGITAL_OUT);
+	double rate = 3;
+
+	indexer.set_value(false);
+
+	while (true) {
+		if (L1.isPressed()) {
+			for (int i = 0; i < 3; i++) {
+				indexer.set_value(true);
+				pros::delay(1000 / rate * 0.3);
+				indexer.set_value(false);
+				pros::delay(1000 / rate * 0.7);
+			}
+		}
+		pros::delay(10);
 	}
 }
 
@@ -303,7 +328,7 @@ void competition_initialize() {}
  * from where it left off.
  */
 void autonomous() {
-	backward(1200, 0.15, 1.1);
+	turn(180, r);
 }
 
 /**
@@ -322,9 +347,21 @@ void autonomous() {
 void opcontrol() {
 	Controller controller;
 	ControllerButton R1(ControllerDigital::R1);
+	ControllerButton R2(ControllerDigital::R2);
+	ControllerButton L1(ControllerDigital::L1);
 	Motor intake(-9);
+	Motor flywheel(13);
+	pros::ADIPort indexer('A', pros::E_ADI_DIGITAL_OUT);
 	double left = 0;
 	double right = 0;
+
+	IMU inertial(16, IMUAxes::z);
+	inertial.reset();
+
+	bool flywheel_active = false;
+	bool pneumatics_active = false;
+
+	pros::Task run_indexer(indexer_task);
 
 	//6 motor drive, 257 rpm, 4" omniss
 	std::shared_ptr<ChassisController> drive =
@@ -336,6 +373,16 @@ void opcontrol() {
 	drive->getModel()->setBrakeMode(AbstractMotor::brakeMode::brake);
 
 	while (true) {
+		if (R2.changedToPressed()) {
+			flywheel_active = !flywheel_active;
+		}
+
+		if (flywheel_active) {
+			flywheel.moveVoltage(12000);
+		} else {
+			flywheel.moveVoltage(0);
+		}
+
 		left = controller.getAnalog(ControllerAnalog::leftY);
 		right = controller.getAnalog(ControllerAnalog::rightY);
 
