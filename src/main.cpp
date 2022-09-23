@@ -370,9 +370,13 @@ void catapults_task(void*) {
 	ControllerButton LEFT(ControllerDigital::left);
 	pros::ADIPort catapults('B', pros::E_ADI_DIGITAL_OUT);
 	catapults.set_value(false);
+
+	bool pneumatics_extended = true;
+
 	while (true) {
 		if (LEFT.changedToPressed()) {
-			catapults.set_value(true);
+			catapults.set_value(pneumatics_extended);
+			pneumatics_extended = !pneumatics_extended;
 		}
 		pros::delay(20);
 	}
