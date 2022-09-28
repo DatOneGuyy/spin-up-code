@@ -6,7 +6,7 @@ enum Direction {right, left};
 Direction r = right;
 Direction l = left;
 double flywheel_speed = 0;
-double target_speed = 72;
+double target_speed = 0;
 
 double controller_map(double i) {
 		double sign = i == 0 ? 0 : fabs(i) / i;
@@ -86,6 +86,10 @@ void forward(double distance, double p = 0.15, double g = 1.1, double slew_rate 
 		}
 		slew_count++;
 
+		if (120 * (power - angle * kg) < 5) {
+			break;
+		}
+
 		pros::delay(step);
 	}
 
@@ -147,6 +151,7 @@ void drive(double distance, double p = 0.15, double g = 1.1, double slew_rate = 
 void pressure(double time, double speed = 70) {
 	MotorGroup left({-3, -11, -12});
 	MotorGroup right({10, 18, 19});
+	Motor intake(-9);
 
 	left.setEncoderUnits(AbstractMotor::encoderUnits::degrees);
 	right.setEncoderUnits(AbstractMotor::encoderUnits::degrees);
@@ -155,9 +160,11 @@ void pressure(double time, double speed = 70) {
 	right.moveVoltage(-speed * 120);
 
 	for (int i = 0; i < time / 10; i++) {
+		intake.moveVoltage(-12000);
 		pros::delay(10);
 	}
 
+	intake.moveVoltage(0);
 	left.moveVoltage(0);
 	right.moveVoltage(0);
 }
@@ -178,7 +185,7 @@ void turn_right(double angle, double slew_rate = 0.6, double threshold = 2, doub
 	double error = angle;
 	double power = 0;
 	double kp = fmax(fmin(angle / 57, 1.5), 0.6);
-	double kd = 0.5;
+	double kd = 0;
 	double past_error = 0;
 
 	int slew_count = 0;
@@ -222,7 +229,7 @@ void turn_left(double angle, double slew_rate = 0.6, double threshold = 2, doubl
 	double power = 0;
 	double kp = fmax(fmin(angle / 57, 1.5), 0.6);
 	double past_error = 0;
-	double kd = 0.5;
+	double kd = 0;
 
 	int slew_count = 0;
 	int step = 2;
@@ -250,7 +257,8 @@ void turn(double angle, Direction direction, double p = 1.0, double d = 0.25, do
 	if (direction == r) {
 		turn_right(angle, slew_rate, threshold, timeout);
 	} else {
-		turn_left(angle, slew_rate, threshold, timeout);}} //turn right = true
+		turn_left(angle, slew_rate, threshold, timeout);
+	}} //turn right = true
 void toggle_intake(bool reverse = false) {
 	Motor intake(-9);
 	bool intake_active = false;
@@ -269,11 +277,23 @@ void toggle_intake(bool reverse = false) {
 		intake.moveVoltage(reverse ? -12000 : 12000);
 	}
 }
+void start_intake() {
+	Motor intake(-9);
+	intake.moveVoltage(12000);
+}
+void stop_intake() {
+	Motor intake(-9);
+	intake.moveVoltage(0);
+}
+void reverse_intake() {
+	Motor intake(-9);
+	intake.moveVoltage(-12000);
+}
 void shoot(int count) {
 	pros::ADIPort indexer('A', pros::E_ADI_DIGITAL_OUT);
 	double shot_1, shot_2, shot_3;
 	for (int i = 0; i < count; i++) {
-		while (abs(flywheel_speed - target_speed) > 1) {
+		while (abs(flywheel_speed - target_speed) > 0.7) {
 			pros::delay(10);
 			pros::screen::print(pros::E_TEXT_MEDIUM_CENTER, 4, "flywheel error: %f", abs(flywheel_speed - 80));
 		}
@@ -312,11 +332,11 @@ void indexer_task(void*) {
 	ControllerButton L2(ControllerDigital::L2);
 	Motor flywheel(13);
 
-	double rate = 3.3;
+	double rate = 3;
 
 	bool flywheel_idle = true;
 	double idle = 40;
-	double active = 70;
+	double active = 90;
 
 	indexer.set_value(false);
 
@@ -333,11 +353,14 @@ void indexer_task(void*) {
 		if (L1.changedToPressed() && !flywheel_idle) {
 			for (int i = 0; i < 3; i++) {
 				indexer.set_value(true);
+				flywheel.moveVoltage(ptv(100));
 				pros::delay(1000 / rate * 0.3);
 				indexer.set_value(false);
 				pros::delay(1000 / rate * 0.7);
-				flywheel_idle = true;
 			}
+			pros::delay(500);
+			flywheel_idle = true;
+			flywheel.moveVoltage(ptv(idle));
 			pros::delay(500);
 		}
 		pros::delay(10);
@@ -407,22 +430,31 @@ void drive_task(void*) {
 }
 
 void right_auton() {
+	target_speed = 77;
 	pros::Task flywheel_auton(flywheel_task);
 
 	toggle_intake();
-	drive(800);
-	turn(20, r);
-	toggle_intake();
+	drive(770);
+	turn(17, r);
+	pros::delay(600);
 	shoot(3);
-	turn(75, l);
-	drive(-950);
-	turn(50, r);
-	toggle_intake(true);
-	pressure(800);
 	toggle_intake();
+	turn(68, l);
+	target_speed = 40;
+	drive(-950);
+	turn(40, r);
+	pressure(350, 50);
 }
 void left_auton() {
+	target_speed = 79;
+	pros::Task flywheel_auton(flywheel_task);
 
+	pressure(200, 30);
+	drive(200);
+	turn(30, r);
+	pros::screen::print(pros::E_TEXT_MEDIUM_CENTER, 8, "finished turn");
+	drive(600);
+	turn(90, l);
 }
 
 /**
@@ -463,7 +495,7 @@ void competition_initialize() {}
  * from where it left off.
  */
 void autonomous() {
-	Direction auton = r;
+	Direction auton = l;
 	if (auton == r) {
 		right_auton();
 	} else {
