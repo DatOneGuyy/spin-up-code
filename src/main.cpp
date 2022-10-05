@@ -86,10 +86,6 @@ void forward(double distance, double p = 0.15, double g = 1.1, double slew_rate 
 		}
 		slew_count++;
 
-		if (120 * (power - angle * kg) < 5) {
-			break;
-		}
-
 		pros::delay(step);
 	}
 
@@ -293,9 +289,9 @@ void shoot(int count) {
 	pros::ADIPort indexer('A', pros::E_ADI_DIGITAL_OUT);
 	double shot_1, shot_2, shot_3;
 	for (int i = 0; i < count; i++) {
-		while (abs(flywheel_speed - target_speed) > 0.7) {
-			pros::delay(10);
-			pros::screen::print(pros::E_TEXT_MEDIUM_CENTER, 4, "flywheel error: %f", abs(flywheel_speed - 80));
+		while (abs(flywheel_speed - target_speed) > 2) {
+			pros::delay(1);
+			pros::screen::print(pros::E_TEXT_MEDIUM_CENTER, 4, "flywheel error: %f", abs(flywheel_speed - target_speed));
 		}
 		indexer.set_value(true);
 		pros::screen::print(pros::E_TEXT_MEDIUM_CENTER, 5 + i, "shot: %f", abs(flywheel_speed));
@@ -374,7 +370,7 @@ void flywheel_task(void*) {
 
 	double target = target_speed;
 	double speed = 0;
-	double kp = 4;
+	double kp = 3;
 	double error = target;
 	double voltage = target * 120;
 
@@ -386,7 +382,7 @@ void flywheel_task(void*) {
 		flywheel.moveVoltage(voltage);
 		flywheel_speed = flywheel.getActualVelocity();
 		pros::screen::print(pros::E_TEXT_MEDIUM_CENTER, 3, "speed: %f, voltage: %f", flywheel.getActualVelocity(), voltage);
-		pros::delay(10);
+		pros::delay(5);
 	}
 }
 void catapults_task(void*) {
@@ -446,15 +442,21 @@ void right_auton() {
 	pressure(350, 50);
 }
 void left_auton() {
-	target_speed = 79;
+	target_speed = 80;
 	pros::Task flywheel_auton(flywheel_task);
-
 	pressure(200, 30);
-	drive(200);
-	turn(30, r);
-	pros::screen::print(pros::E_TEXT_MEDIUM_CENTER, 8, "finished turn");
-	drive(600);
-	turn(90, l);
+	pros::delay(200);
+	drive(200, 0.4, 1.1, 0.5, 20);
+	turn(55, r, 0.6);
+	toggle_intake();
+	drive(600, 0.15, 0.5);
+	turn(80, l);
+	shoot(3);
+	turn(65, r);
+	target_speed = 65;
+	drive(600, 0.15, 0.5);
+	turn(80, l);
+	shoot(2);
 }
 
 /**
