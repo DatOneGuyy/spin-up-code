@@ -1,12 +1,13 @@
 #include "main.h"
 #include "okapi/api.hpp"
 using namespace okapi;
-
+//latest
 enum Direction {right, left};
 Direction r = right;
 Direction l = left;
 double flywheel_speed = 0;
 double target_speed = 0;
+bool driving = false;
 
 double controller_map(double i) {
 		double sign = i == 0 ? 0 : fabs(i) / i;
@@ -59,7 +60,7 @@ void forward(double distance, double p = 0.15, double g = 1.1, double slew_rate 
 	right.tarePosition();
 
 	IMU inertial(16, IMUAxes::z);
-	inertial.reset();
+	inertial.reset(0);
 
 	double error = distance;
 	double power = 0;
@@ -104,7 +105,7 @@ void backward(double distance, double p = 0.15, double g = 1.1, double slew_rate
 	right.tarePosition();
 
 	IMU inertial(16, IMUAxes::z);
-	inertial.reset();
+	inertial.reset(0);
 
 	double error = -distance;
 	double power = 0;
@@ -156,7 +157,7 @@ void pressure(double time, double speed = 70) {
 	right.moveVoltage(-speed * 120);
 
 	for (int i = 0; i < time / 10; i++) {
-		intake.moveVoltage(-12000);
+		intake.moveVoltage(12000);
 		pros::delay(10);
 	}
 
@@ -176,7 +177,7 @@ void turn_right(double angle, double slew_rate = 0.6, double threshold = 2, doub
 	right.tarePosition();
 
 	IMU inertial(16, IMUAxes::z);
-	inertial.reset();
+	inertial.reset(0);
 
 	double error = angle;
 	double power = 0;
@@ -219,7 +220,7 @@ void turn_left(double angle, double slew_rate = 0.6, double threshold = 2, doubl
 	right.tarePosition();
 
 	IMU inertial(16, IMUAxes::z);
-	inertial.reset();
+	inertial.reset(0);
 
 	double error = angle;
 	double power = 0;
@@ -289,14 +290,14 @@ void shoot(int count) {
 	pros::ADIPort indexer('A', pros::E_ADI_DIGITAL_OUT);
 	double shot_1, shot_2, shot_3;
 	for (int i = 0; i < count; i++) {
-		while (abs(flywheel_speed - target_speed) > 2) {
+		while (abs(flywheel_speed - target_speed) > 3) {
 			pros::delay(1);
 			pros::screen::print(pros::E_TEXT_MEDIUM_CENTER, 4, "flywheel error: %f", abs(flywheel_speed - target_speed));
 		}
 		indexer.set_value(true);
 		pros::screen::print(pros::E_TEXT_MEDIUM_CENTER, 5 + i, "shot: %f", abs(flywheel_speed));
 
-		pros::delay(100);
+		pros::delay(50);
 		indexer.set_value(false);
 		pros::delay(400);
 	}
@@ -306,6 +307,7 @@ void intake_task(void*) {
 	ControllerButton R1(ControllerDigital::R1);
 	ControllerButton R2(ControllerDigital::R2);
 	Motor intake(-9);
+	OpticalSensor optical(14);
 	bool active = false;
 
 	while (true) {
@@ -316,6 +318,9 @@ void intake_task(void*) {
 		if (!R2.isPressed()) {
 			intake.moveVoltage(12000 * (active ? 1 : 0));
 		} else if (R2.isPressed()) {
+			if (optical.getHue()) {
+
+			}
 			intake.moveVoltage(-12000);
 		} else {
 			intake.moveVoltage(0);
@@ -326,13 +331,15 @@ void indexer_task(void*) {
 	ControllerButton L1(ControllerDigital::L1);
 	pros::ADIPort indexer('A', pros::E_ADI_DIGITAL_OUT);
 	ControllerButton L2(ControllerDigital::L2);
+	ControllerButton UP(ControllerDigital::up);
+	ControllerButton RIGHT(ControllerDigital::right);
 	Motor flywheel(13);
 
 	double rate = 3;
 
 	bool flywheel_idle = true;
 	double idle = 40;
-	double active = 90;
+	double active = 85;
 
 	indexer.set_value(false);
 
@@ -359,6 +366,21 @@ void indexer_task(void*) {
 			flywheel.moveVoltage(ptv(idle));
 			pros::delay(500);
 		}
+		if (UP.changedToPressed()) {
+			indexer.set_value(true);
+			flywheel.moveVoltage(ptv(100));
+			pros::delay(1000 / rate * 0.3);
+			indexer.set_value(false);
+			pros::delay(1000 / rate * 0.7);
+			flywheel.moveVoltage(ptv(idle));
+		}
+		if (RIGHT.changedToPressed()) {
+			if (active == 85) {
+				active = 100;
+			} else {
+				active = 85;
+			}
+		}
 		pros::delay(10);
 	}
 }
@@ -370,11 +392,12 @@ void flywheel_task(void*) {
 
 	double target = target_speed;
 	double speed = 0;
-	double kp = 3;
+	double kp = 5;
 	double error = target;
 	double voltage = target * 120;
 
-	while (true) {
+	while (true && !driving) {
+		target = target_speed;
 		error = target - flywheel.getActualVelocity();
 		pros::screen::print(pros::E_TEXT_MEDIUM_CENTER, 0, "error: %f, speed: %f, voltage: %f", error, flywheel.getActualVelocity(), voltage);
 		voltage += kp * error;
@@ -388,22 +411,34 @@ void flywheel_task(void*) {
 void catapults_task(void*) {
 	ControllerButton LEFT(ControllerDigital::left);
 	pros::ADIPort catapults('B', pros::E_ADI_DIGITAL_OUT);
-	catapults.set_value(false);
+	pros::ADIPort catapults2('D', pros::E_ADI_DIGITAL_OUT);
 
-	bool pneumatics_extended = true;
+	bool pneumatics_extended = false;
 
-	while (true) {
+	while (true && driving) {
 		if (LEFT.changedToPressed()) {
-			catapults.set_value(pneumatics_extended);
 			pneumatics_extended = !pneumatics_extended;
+			catapults.set_value(pneumatics_extended);
+			catapults2.set_value(pneumatics_extended);
+		}
+		pros::delay(20);
+	}
+}
+void intake_lift_task(void*) {
+	ControllerButton DOWN(ControllerDigital::down);
+	pros::ADIPort lift('C', pros::E_ADI_DIGITAL_OUT);
+
+	bool pneumatics_extended = false;
+	while (true && driving) {
+		if (DOWN.changedToPressed()) {
+			pneumatics_extended = !pneumatics_extended;
+			lift.set_value(pneumatics_extended);
 		}
 		pros::delay(20);
 	}
 }
 void drive_task(void*) {
 	Controller controller;
-
-	IMU inertial(16, IMUAxes::z);
 
 	double left, right;
 
@@ -415,7 +450,7 @@ void drive_task(void*) {
 
 	drive->getModel()->setBrakeMode(AbstractMotor::brakeMode::brake);
 
-	while (true) {
+	while (true && driving) {
 		left = controller.getAnalog(ControllerAnalog::leftY);
 		right = controller.getAnalog(ControllerAnalog::rightY);
 
@@ -426,37 +461,35 @@ void drive_task(void*) {
 }
 
 void right_auton() {
-	target_speed = 77;
-	pros::Task flywheel_auton(flywheel_task);
-
+	target_speed = 73;
 	toggle_intake();
 	drive(770);
 	turn(17, r);
-	pros::delay(600);
 	shoot(3);
 	toggle_intake();
 	turn(68, l);
 	target_speed = 40;
-	drive(-950);
+	drive(-900);
 	turn(40, r);
 	pressure(350, 50);
 }
 void left_auton() {
-	target_speed = 80;
-	pros::Task flywheel_auton(flywheel_task);
+	target_speed = 74;
 	pressure(200, 30);
 	pros::delay(200);
-	drive(200, 0.4, 1.1, 0.5, 20);
-	turn(55, r, 0.6);
+	drive(150, 0.4, 1.1, 0.5, 20);
+	turn(58, r, 0.6);
 	toggle_intake();
-	drive(600, 0.15, 0.5);
+	drive(600, 0.3, 0.5, 0.5, 20);
 	turn(80, l);
-	shoot(3);
-	turn(65, r);
-	target_speed = 65;
-	drive(600, 0.15, 0.5);
-	turn(80, l);
-	shoot(2);
+	pros::delay(1000);
+	shoot(4);
+	turn(68, r);
+	target_speed = 66;
+	drive(640, 0.15, 0.5);
+	turn(81, l);
+	pros::delay(1000);
+	shoot(4);
 }
 
 /**
@@ -472,7 +505,8 @@ void initialize() {}
  * the VEX Competition Switch, following either autonomous or opcontrol. When
  * the robot is enabled, this task will exit.
  */
-void disabled() {}
+void disabled() {
+}
 
 /**
  * Runs after initialize(), and before autonomous when connected to the Field
@@ -498,11 +532,16 @@ void competition_initialize() {}
  */
 void autonomous() {
 	Direction auton = l;
+	pros::ADIPort catapults('B', pros::E_ADI_DIGITAL_OUT);
+	catapults.set_value(false);
+	driving = false;
+	pros::Task flywheel_auton(flywheel_task);
 	if (auton == r) {
-		right_auton();
+		//right_auton();
 	} else {
 		left_auton();
 	}
+	flywheel_auton.suspend();
 }
 
 /**
@@ -520,15 +559,12 @@ void autonomous() {
  */
 void opcontrol() {
 	IMU inertial(16, IMUAxes::z);
-	inertial.reset();
 
 	pros::Task run_indexer(indexer_task);
 	pros::Task run_intake(intake_task);
-	pros::Task run_drive(drive_task);
 	pros::Task run_catapults(catapults_task);
+	pros::Task run_drive(drive_task);
+	pros::Task run_intake_lift(intake_lift_task);
+	driving = true;
 
-	while (true) {
-		pros::screen::print(pros::E_TEXT_MEDIUM_CENTER, 9, "angle: %f", inertial.getRemapped(-180, 180));
-		pros::delay(15);
-	}
 }
